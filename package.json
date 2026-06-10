@@ -1,0 +1,22 @@
+{
+  "name": "personal-assistant",
+  "version": "0.1.0",
+  "description": "AI personal assistant that manages appointments via Google Calendar, Gmail and WhatsApp Business",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "auth:google": "node scripts/google-auth.js",
+    "check": "node --check src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
+    "better-sqlite3": "^11.8.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0"
+  }
+}

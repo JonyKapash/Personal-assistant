@@ -45,17 +45,21 @@ export async function notifyOwner(text) {
   }
 }
 
-/** Extract incoming text messages from a webhook payload. */
+/** Extract incoming text messages (with sender profile names) from a webhook payload. */
 export function parseWebhookMessages(body) {
   const messages = [];
   for (const entry of body.entry || []) {
     for (const change of entry.changes || []) {
       const value = change.value || {};
+      const profiles = new Map(
+        (value.contacts || []).map((c) => [c.wa_id, c.profile?.name || null])
+      );
       for (const msg of value.messages || []) {
         if (msg.type !== "text") continue;
         messages.push({
           id: msg.id,
           from: msg.from, // sender wa_id (international number, digits only)
+          name: profiles.get(msg.from) || null,
           text: msg.text?.body || "",
           timestamp: Number(msg.timestamp) * 1000,
         });

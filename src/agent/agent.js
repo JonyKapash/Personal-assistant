@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
 import { SYSTEM_PROMPT } from "./prompts.js";
-import { toolDefinitions, executeTool } from "./tools.js";
+import { toolsForChannel, executeTool } from "./tools.js";
 import { getConversation, saveConversation } from "../db.js";
 
 const client = new Anthropic({ apiKey: config.anthropic.apiKey });
@@ -13,11 +13,13 @@ const MAX_ITERATIONS = 15;
  *
  * @param {string} conversationId - stable id, e.g. "whatsapp:9725..." or "email:<threadId>"
  * @param {string} userText - the incoming message, wrapped with channel context
+ * @param {object} ctx - { channel, contact: {wa_id, email, name} | null }
  * @returns {string} the assistant's final text response
  */
-export async function runAgent(conversationId, userText) {
+export async function runAgent(conversationId, userText, ctx = { channel: "whatsapp-owner", contact: null }) {
   const messages = getConversation(conversationId);
   messages.push({ role: "user", content: userText });
+  const tools = toolsForChannel(ctx.channel);
 
   let response;
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -28,7 +30,7 @@ export async function runAgent(conversationId, userText) {
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],
-      tools: toolDefinitions,
+      tools,
       messages,
     });
 
@@ -48,7 +50,7 @@ export async function runAgent(conversationId, userText) {
     for (const block of response.content) {
       if (block.type !== "tool_use") continue;
       console.log(`[agent] tool: ${block.name}`, JSON.stringify(block.input).slice(0, 300));
-      const result = await executeTool(block.name, block.input);
+      const result = await executeTool(block.name, block.input, ctx);
       toolResults.push({
         type: "tool_result",
         tool_use_id: block.id,
@@ -69,8 +71,8 @@ export async function runAgent(conversationId, userText) {
   return text || "(done)";
 }
 
-/** Context block prepended to every incoming message so the model knows the channel and current time. */
-export function buildContext({ channel, extra }) {
+/** Context block prepended to every incoming message so the model knows the channel, sender, and current time. */
+export function buildContext({ channel, contact, extra }) {
   const now = new Intl.DateTimeFormat("en-GB", {
     timeZone: config.timezone,
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -80,6 +82,9 @@ export function buildContext({ channel, extra }) {
     `channel: ${channel}`,
     `current datetime: ${now} (${config.timezone})`,
   ];
+  if (contact) {
+    lines.push(`sender: ${contact.name || "unknown name"} (whatsapp: ${contact.wa_id || "-"}, email: ${contact.email || "-"})`);
+  }
   if (extra) lines.push(...extra);
   return `<context>\n${lines.join("\n")}\n</context>`;
 }

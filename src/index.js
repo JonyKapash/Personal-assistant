@@ -1,6 +1,7 @@
 import { config } from "./config.js";
 import { createServer } from "./server.js";
 import { startEmailWatcher } from "./emailWatcher.js";
+import { startCalendarWatcher } from "./calendarWatcher.js";
 import { getAuth } from "./services/google.js";
 
 async function main() {
@@ -16,6 +17,7 @@ async function main() {
   });
 
   startEmailWatcher();
+  startCalendarWatcher();
 
   console.log(
     `Personal assistant running for ${config.owner.name} <${config.owner.email}> (model: ${config.anthropic.model}, tz: ${config.timezone})`

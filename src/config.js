@@ -18,6 +18,7 @@ export const config = {
     email: required("OWNER_EMAIL").toLowerCase(),
     whatsapp: process.env.OWNER_WHATSAPP || "",
   },
+  businessName: process.env.BUSINESS_NAME || process.env.OWNER_NAME || "the business",
   timezone: process.env.TIMEZONE || "UTC",
   scheduling: {
     workDayStart: process.env.WORK_DAY_START || "09:00",
@@ -30,11 +31,13 @@ export const config = {
     tokenPath: process.env.GOOGLE_TOKEN_PATH || "./data/google-token.json",
     calendarId: process.env.GOOGLE_CALENDAR_ID || "primary",
     pollSeconds: parseInt(process.env.GMAIL_POLL_SECONDS || "60", 10),
+    calendarWatchSeconds: parseInt(process.env.CALENDAR_WATCH_SECONDS || "300", 10),
   },
   whatsapp: {
     token: process.env.WHATSAPP_TOKEN || "",
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "",
     verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || "",
+    appSecret: process.env.WHATSAPP_APP_SECRET || "",
     apiVersion: process.env.WHATSAPP_API_VERSION || "v21.0",
     enabled: Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
   },

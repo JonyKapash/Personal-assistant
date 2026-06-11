@@ -1,5 +1,6 @@
 import { getCalendarClient } from "./google.js";
 import { config } from "../config.js";
+import { markEventTouched } from "../db.js";
 
 const calendarId = () => config.google.calendarId;
 
@@ -36,7 +37,64 @@ export async function listEvents({ timeMin, timeMax, query }) {
   return (res.data.items || []).map(toEventSummary);
 }
 
-export async function createEvent({ title, start, end, description, location, attendees, sendInvites }) {
+export async function getEvent(eventId) {
+  const calendar = getCalendarClient();
+  const res = await calendar.events.get({ calendarId: calendarId(), eventId });
+  return res.data;
+}
+
+/** List upcoming events belonging to a specific contact (by WhatsApp id tag and/or attendee email). */
+export async function listEventsForContact({ waId, email, timeMin, timeMax }) {
+  const calendar = getCalendarClient();
+  const min = timeMin || new Date().toISOString();
+  const max = timeMax || new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
+  const seen = new Map();
+
+  if (waId) {
+    const res = await calendar.events.list({
+      calendarId: calendarId(),
+      timeMin: min,
+      timeMax: max,
+      privateExtendedProperty: `waContact=${waId}`,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 25,
+    });
+    for (const e of res.data.items || []) seen.set(e.id, e);
+  }
+  if (email) {
+    const res = await calendar.events.list({
+      calendarId: calendarId(),
+      timeMin: min,
+      timeMax: max,
+      q: email,
+      singleEvents: true,
+      orderBy: "startTime",
+      maxResults: 25,
+    });
+    for (const e of res.data.items || []) {
+      const isAttendee = (e.attendees || []).some(
+        (a) => a.email?.toLowerCase() === email.toLowerCase()
+      );
+      if (isAttendee || (e.description || "").includes(email)) seen.set(e.id, e);
+    }
+  }
+  return [...seen.values()]
+    .sort((a, b) => String(a.start?.dateTime || a.start?.date).localeCompare(String(b.start?.dateTime || b.start?.date)))
+    .map(toEventSummary);
+}
+
+/** True if the event is associated with this contact (used to scope client-channel actions). */
+export function eventBelongsToContact(event, { waId, email }) {
+  if (waId && event.extendedProperties?.private?.waContact === waId) return true;
+  if (email) {
+    const lower = email.toLowerCase();
+    if ((event.attendees || []).some((a) => a.email?.toLowerCase() === lower)) return true;
+  }
+  return false;
+}
+
+export async function createEvent({ title, start, end, description, location, attendees, sendInvites, privateProps }) {
   const calendar = getCalendarClient();
   const res = await calendar.events.insert({
     calendarId: calendarId(),
@@ -48,8 +106,10 @@ export async function createEvent({ title, start, end, description, location, at
       start: { dateTime: start, timeZone: config.timezone },
       end: { dateTime: end, timeZone: config.timezone },
       attendees: (attendees || []).map((email) => ({ email })),
+      extendedProperties: privateProps ? { private: privateProps } : undefined,
     },
   });
+  markEventTouched(res.data.id);
   return toEventSummary(res.data);
 }
 
@@ -67,6 +127,7 @@ export async function updateEvent({ eventId, title, start, end, description, loc
     sendUpdates: sendInvites ? "all" : "none",
     requestBody: patch,
   });
+  markEventTouched(eventId);
   return toEventSummary(res.data);
 }
 
@@ -77,7 +138,22 @@ export async function deleteEvent({ eventId, sendInvites }) {
     eventId,
     sendUpdates: sendInvites ? "all" : "none",
   });
+  markEventTouched(eventId);
   return { deleted: true, eventId };
+}
+
+/** Events whose Google "updated" timestamp is after the given ISO time (for the change watcher). */
+export async function listUpdatedEvents(updatedMinIso) {
+  const calendar = getCalendarClient();
+  const res = await calendar.events.list({
+    calendarId: calendarId(),
+    updatedMin: updatedMinIso,
+    timeMin: new Date().toISOString(),
+    singleEvents: true,
+    showDeleted: true,
+    maxResults: 50,
+  });
+  return (res.data.items || []).map((e) => ({ ...toEventSummary(e), cancelled: e.status === "cancelled" }));
 }
 
 /**

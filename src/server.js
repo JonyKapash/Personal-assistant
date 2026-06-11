@@ -1,12 +1,14 @@
 import express from "express";
+import crypto from "node:crypto";
 import { config } from "./config.js";
 import { parseWebhookMessages, sendWhatsappMessage } from "./services/whatsapp.js";
-import { wasWhatsappProcessed, markWhatsappProcessed } from "./db.js";
+import { wasWhatsappProcessed, markWhatsappProcessed, upsertContactByWa } from "./db.js";
 import { runAgent, buildContext } from "./agent/agent.js";
 
 export function createServer() {
   const app = express();
-  app.use(express.json());
+  // Keep the raw body so the Meta webhook signature can be verified
+  app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -24,6 +26,10 @@ export function createServer() {
 
   // Incoming WhatsApp messages
   app.post("/webhooks/whatsapp", (req, res) => {
+    if (!verifySignature(req)) {
+      console.warn("[whatsapp] webhook signature verification failed");
+      return res.sendStatus(403);
+    }
     // Ack immediately; Meta retries on slow responses
     res.sendStatus(200);
     const messages = parseWebhookMessages(req.body);
@@ -37,20 +43,38 @@ export function createServer() {
   return app;
 }
 
+/** Verify X-Hub-Signature-256 (HMAC-SHA256 of the raw body with the app secret). */
+function verifySignature(req) {
+  if (!config.whatsapp.appSecret) return true; // not configured (dev mode)
+  const header = req.get("x-hub-signature-256") || "";
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", config.whatsapp.appSecret).update(req.rawBody).digest("hex");
+  return (
+    header.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(header), Buffer.from(expected))
+  );
+}
+
 async function handleWhatsappMessage(msg) {
   if (wasWhatsappProcessed(msg.id)) return;
   markWhatsappProcessed(msg.id);
 
-  if (msg.from !== config.owner.whatsapp) {
-    console.warn(`[whatsapp] ignoring message from unauthorized number ${msg.from}`);
-    return;
-  }
+  const isOwner = msg.from === config.owner.whatsapp;
+  const channel = isOwner ? "whatsapp-owner" : "whatsapp-client";
+  const contact = isOwner
+    ? { wa_id: msg.from, email: config.owner.email, name: config.owner.name }
+    : upsertContactByWa(msg.from, msg.name);
 
-  console.log(`[whatsapp] owner: ${msg.text.slice(0, 200)}`);
-  const context = buildContext({ channel: "whatsapp-owner" });
+  console.log(`[whatsapp] ${channel} ${msg.from}: ${msg.text.slice(0, 200)}`);
+
+  const context = buildContext({ channel, contact });
   let reply;
   try {
-    reply = await runAgent(`whatsapp:${msg.from}`, `${context}\n\n${msg.text}`);
+    reply = await runAgent(`whatsapp:${msg.from}`, `${context}\n\n${msg.text}`, {
+      channel,
+      contact,
+    });
   } catch (err) {
     console.error("[whatsapp] agent failed:", err);
     reply = "Sorry, something went wrong while handling that. Please try again.";

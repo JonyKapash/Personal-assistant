@@ -1,6 +1,6 @@
 import { config } from "./config.js";
 import { fetchUnreadEmails, markAsRead } from "./services/gmail.js";
-import { wasEmailProcessed, markEmailProcessed } from "./db.js";
+import { wasEmailProcessed, markEmailProcessed, upsertContactByEmail } from "./db.js";
 import { runAgent, buildContext } from "./agent/agent.js";
 
 let running = false;
@@ -43,8 +43,14 @@ async function tick() {
 }
 
 async function handleEmail(email) {
+  // Register/refresh the sender as a known contact so the agent can connect
+  // their email and WhatsApp identities across channels.
+  const displayName = email.from.replace(/<[^>]+>/, "").replace(/"/g, "").trim() || null;
+  const contact = upsertContactByEmail(email.fromEmail, displayName);
+
   const context = buildContext({
     channel: "email",
+    contact,
     extra: [
       `email from: ${email.from}`,
       `email subject: ${email.subject}`,
@@ -53,7 +59,7 @@ async function handleEmail(email) {
     ],
   });
   const prompt = `${context}\n\nNew incoming email:\n\n${email.body}`;
-  const result = await runAgent(`email:${email.threadId}`, prompt);
+  const result = await runAgent(`email:${email.threadId}`, prompt, { channel: "email", contact });
   if (result.trim() !== "SKIP") {
     console.log(`[email] agent result: ${result.slice(0, 200)}`);
   }
